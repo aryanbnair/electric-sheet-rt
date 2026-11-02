@@ -129,10 +129,12 @@ def main(raw, original, out, values=None):
             ftext = "=" + (f_el.text or "")
             unchanged = ref in of and isinstance(of[ref], str) and of[ref] == ftext
             lo = lov.get(ref)
-            if ref in lov and not (is_err(lo) and unchanged and not is_err(ov.get(ref)) and ref in ov):
+            # LibreOffice cannot evaluate some Google functions (UNIQUE, IMPORTRANGE): where it gives an
+            # error but Google had a real result, keep Google's result as the display cache.
+            if ref in lov and not (is_err(lo) and ref in ov and not is_err(ov.get(ref))):
                 set_cached(c_el, lo)
                 stats["cached_lo"] += 1
-            elif unchanged and ref in ov:
+            elif ref in ov and (unchanged or ref in lov):
                 set_cached(c_el, ov[ref])
                 stats["cached_orig"] += 1
                 if ref in lov:
