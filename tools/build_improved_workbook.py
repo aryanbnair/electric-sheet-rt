@@ -25,6 +25,7 @@ import sys
 import openpyxl
 from openpyxl.formatting.rule import CellIsRule, FormulaRule
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.worksheet.cell_range import CellRange
 from openpyxl.worksheet.formula import ArrayFormula
 from openpyxl.worksheet.hyperlink import Hyperlink
 
@@ -286,6 +287,13 @@ FREEZE = {  # sheet: new freeze cell (only where none existed)
     "Pinouts": "A3",
     "JOOOO": "A3",
     "AIR GEO pinout": "A3",
+}
+# Google exports these "tables" (banded formatting, no header row) inside the sheet's filter range.
+# Excel does not allow a table to overlap the sheet filter and deletes them on open with a
+# "repaired" warning. Removing them here gives the same result without the warning; the filters stay.
+TABLES_OVERLAPPING_FILTER = {
+    ("Platinen Teile", "Table_1"), ("Platinen Teile", "Table_5"), ("Platinen Teile", "Table_6"),
+    ("Std. Bauteile", "Table_36"), ("C", "Table_37"), ("D", "Table_38"),
 }
 HEADER_ROWS = {  # plain header rows that get the workbook's table-header look
     "Platinen Tracking": "B1:I1",
@@ -651,6 +659,9 @@ def build_notes(wb, ws, log, original_order):
         "Admin, Archive. Hidden tabs stay hidden. Formulas refer to tabs by name, so the order change does not affect them.",
         "Frozen header rows added on: " + ", ".join(FREEZE) + ".",
         "Header rows styled like the workbook's existing tables on: " + ", ".join(f"{k} ({v})" for k, v in HEADER_ROWS.items()) + ".",
+        "Removed 6 header-less 'tables' from the Google export (Platinen Teile: Table_1, Table_5, Table_6; "
+        "Std. Bauteile: Table_36; C: Table_37; D: Table_38). They overlapped the sheet filter, which Excel does not "
+        "allow, so Excel deleted them with a 'repaired' warning anyway. Data, colours and filters are unchanged.",
         "No tab was renamed or deleted, no row or column was inserted or removed, and no typed value was changed.",
         "Dropdowns, colour rules, tables, pictures and the saved Google filter views (PCB Filter Personal, Filter 1, "
         "Filter 2, FeKru, FrGa) are all kept.",
@@ -732,6 +743,17 @@ def main(src, dst, changes_path):
 
     log = {"cells": [], "styled_cells": [], "new_sheets": NEW_SHEETS, "features": []}
     apply_fixes(wb, log)
+
+    # tables Excel would delete anyway (overlap with the sheet filter)
+    found = set()
+    for ws in wb.worksheets:
+        af = ws.auto_filter.ref
+        for t in list(ws.tables.values()):
+            if af and not CellRange(af.replace("$", "")).isdisjoint(CellRange(t.ref)):
+                found.add((ws.title, t.name))
+                del ws.tables[t.name]
+                log["features"].append([ws.title, "tables"])
+    assert found == TABLES_OVERLAPPING_FILTER, f"unexpected overlapping tables: {found}"
 
     # usability tweaks on existing tabs
     for sheet, cell in FREEZE.items():

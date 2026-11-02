@@ -46,6 +46,33 @@ def sheet_parts(z):
     return out
 
 
+def _rels(z, part):
+    import posixpath
+    rp = posixpath.join(posixpath.dirname(part), "_rels", posixpath.basename(part) + ".rels")
+    if rp not in z.namelist():
+        return {}
+    out = {}
+    for r in etree.fromstring(z.read(rp)):
+        t = r.get("Target")
+        t = t.lstrip("/") if t.startswith("/") else posixpath.normpath(posixpath.join(posixpath.dirname(part), t))
+        out[r.get("Id")] = (r.get("Type").rsplit("/", 1)[-1], t)
+    return out
+
+
+def drawing_of(z, sheet_part):
+    if not sheet_part:
+        return None
+    for typ, target in _rels(z, sheet_part).values():
+        if typ == "drawing":
+            return target
+    return None
+
+
+def images_of(z, drawing_part):
+    """{relationship id: image bytes} of a drawing part."""
+    return {rid: z.read(t) for rid, (typ, t) in _rels(z, drawing_part).items() if typ == "image"}
+
+
 def insert_before(parent, new_el, after_names):
     for i, child in enumerate(parent):
         if etree.QName(child).localname in after_names:
@@ -143,6 +170,18 @@ def main(raw, original, out, values=None):
                 set_cached(c_el, None)
                 stats["no_value"] += 1
         new_parts[part] = etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+    # 3. pictures: openpyxl rewrites drawing XML with an element in the wrong namespace (Excel then
+    #    "repairs" it). Put the original drawing XML back where the pictures are byte-identical.
+    stats["drawings_restored"] = 0
+    for name, part in parts_r.items():
+        d_r, d_o = drawing_of(zr, part), drawing_of(zo, parts_o.get(name)) if name in parts_o else None
+        if not d_r or not d_o:
+            continue
+        img_r, img_o = images_of(zr, d_r), images_of(zo, d_o)
+        assert img_r == img_o, f"pictures of {name} differ - not restoring drawing"
+        new_parts[d_r] = zo.read(d_o)
+        stats["drawings_restored"] += 1
 
     # workbook-level custom views
     wbr = etree.fromstring(zr.read("xl/workbook.xml"))
